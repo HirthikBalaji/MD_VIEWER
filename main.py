@@ -9,7 +9,7 @@ Features:
 - Export to HTML and PDF.
 - Search functionality with highlighting.
 - Dark mode and font size adjustments.
-- AI-powered summarization and explanation via the Google Gemini API.
+- AI-powered summarization and explanation via the Google Gemini API in a dedicated tab.
 """
 
 import sys
@@ -23,11 +23,12 @@ import google.generativeai as genai
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QSplitter, QFileDialog, QMessageBox, QLineEdit,
-    QPushButton, QLabel, QInputDialog
+    QPushButton, QLabel, QInputDialog, QTabWidget
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QAction, QKeySequence
+
 
 class MarkdownViewer(QMainWindow):
     def __init__(self):
@@ -65,24 +66,49 @@ class MarkdownViewer(QMainWindow):
         self.search_bar_widget = QWidget()
         search_layout = QHBoxLayout(self.search_bar_widget)
         search_layout.setContentsMargins(0, 0, 0, 0)
-        self.search_bar_widget.setVisible(False) # Initially hidden
+        self.search_bar_widget.setVisible(False)  # Initially hidden
         main_layout.addWidget(self.search_bar_widget)
 
-        # Main splitter for editor and preview
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
+        # Main Tab Widget
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
 
-        # Markdown Editor (left side)
+        # --- Tab 1: Markdown Editor ---
+        editor_widget = QWidget()
+        editor_layout = QVBoxLayout(editor_widget)
         self.editor = QTextEdit()
         self.editor.setPlaceholderText("Type your Markdown here...")
-        self.editor.setStyleSheet("font-family: 'Courier New'; font-size: 14px; color: #333; background-color: #fdfdfd;")
-        splitter.addWidget(self.editor)
+        self.editor.setStyleSheet(
+            "font-family: 'Courier New'; font-size: 14px; color: #333; background-color: #fdfdfd;")
+        editor_layout.addWidget(self.editor)
+        self.tabs.addTab(editor_widget, "Editor")
 
-        # HTML Preview (right side)
+        # --- Tab 2: HTML Preview ---
+        preview_widget = QWidget()
+        preview_layout = QVBoxLayout(preview_widget)
         self.preview = QWebEngineView()
-        splitter.addWidget(self.preview)
+        preview_layout.addWidget(self.preview)
+        self.tabs.addTab(preview_widget, "Preview")
 
-        splitter.setSizes([600, 600]) # Initial equal sizes
+        # --- Tab 3: AI Assistant ---
+        ai_widget = QWidget()
+        ai_layout = QVBoxLayout(ai_widget)
+
+        ai_layout.addWidget(QLabel("Content to Analyze:"))
+        self.ai_input_text = QTextEdit()
+        self.ai_input_text.setReadOnly(True)
+        ai_layout.addWidget(self.ai_input_text)
+
+        self.ai_action_button = QPushButton("Summarize / Explain Content Above")
+        self.ai_action_button.clicked.connect(self.run_ai_generation)
+        ai_layout.addWidget(self.ai_action_button)
+
+        ai_layout.addWidget(QLabel("AI Response:"))
+        self.ai_output_text = QTextEdit()
+        self.ai_output_text.setReadOnly(True)
+        ai_layout.addWidget(self.ai_output_text)
+
+        self.tabs.addTab(ai_widget, "AI Assistant")
 
         self.statusBar()
 
@@ -141,8 +167,8 @@ class MarkdownViewer(QMainWindow):
 
         # --- AI Menu ---
         ai_menu = menu_bar.addMenu("&AI Tools")
-        summarize_action = QAction("&Summarize/Explain Selection", self, triggered=self.ai_summarize)
-        summarize_action.setShortcut("Ctrl+Shift+S")
+        summarize_action = QAction("&Send Selection to AI Assistant", self, triggered=self.prepare_ai_tab)
+        summarize_action.setShortcut("Ctrl+Shift A")
         ai_menu.addAction(summarize_action)
 
     def create_search_bar(self):
@@ -231,7 +257,8 @@ class MarkdownViewer(QMainWindow):
         self.preview.setHtml(full_html, baseUrl=base_url)
 
     def open_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "", "Markdown Files (*.md *.mdown);;All Files (*)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open Markdown File", "",
+                                                   "Markdown Files (*.md *.mdown);;All Files (*)")
         if file_path:
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -254,7 +281,8 @@ class MarkdownViewer(QMainWindow):
             self.save_file_as()
 
     def save_file_as(self):
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File", "", "Markdown Files (*.md *.mdown);;All Files (*)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Markdown File", "",
+                                                   "Markdown Files (*.md *.mdown);;All Files (*)")
         if file_path:
             self.current_file_path = file_path
             self.setWindowTitle(f"Python Markdown Viewer - {os.path.basename(file_path)}")
@@ -287,11 +315,9 @@ class MarkdownViewer(QMainWindow):
                 QMessageBox.critical(self, "Error", "Could not export PDF.")
         try:
             self.preview.page().printToPdf(file_path)
-            self.statusBar().showMessage(f"Exported to {file_path}", 3000)
-            QMessageBox.information(self, "Success", f"PDF successfully exported to {file_path}")
+            handle_pdf_creation(True)
         except:
-            self.statusBar().showMessage("PDF export failed.", 3000)
-            QMessageBox.critical(self, "Error", "Could not export PDF.")
+            handle_pdf_creation(False)
 
     def toggle_search_bar(self):
         self.search_bar_widget.setVisible(not self.search_bar_widget.isVisible())
@@ -301,15 +327,22 @@ class MarkdownViewer(QMainWindow):
     def search_text(self):
         query = self.search_input.text()
         if query:
-            self.preview.findText(query)
+            # Search in the editor, not the preview
+            self.editor.find(query)
 
     def toggle_dark_mode(self):
         if self.dark_mode_action.isChecked():
             self.current_css = self.base_css + self.dark_mode_css + self.pygments_dark_css
-            self.editor.setStyleSheet("font-family: 'Courier New'; font-size: 14px; color: #dcdcdc; background-color: #2b2b2b;")
+            editor_style = "font-family: 'Courier New'; font-size: 14px; color: #dcdcdc; background-color: #2b2b2b;"
+            ai_style = "color: #dcdcdc; background-color: #2b2b2b;"
         else:
             self.current_css = self.base_css + self.pygments_css
-            self.editor.setStyleSheet("font-family: 'Courier New'; font-size: 14px; color: #333; background-color: #fdfdfd;")
+            editor_style = "font-family: 'Courier New'; font-size: 14px; color: #333; background-color: #fdfdfd;"
+            ai_style = "color: #333; background-color: #fdfdfd;"
+
+        self.editor.setStyleSheet(editor_style)
+        self.ai_input_text.setStyleSheet(ai_style)
+        self.ai_output_text.setStyleSheet(ai_style)
         self.update_preview()
 
     def adjust_font_size(self, delta):
@@ -320,9 +353,11 @@ class MarkdownViewer(QMainWindow):
         # Adjust editor font size too
         font = self.editor.font()
         new_size = font.pointSize() + (delta // 2)
-        if new_size > 4: # Prevent font from getting too small
+        if new_size > 4:  # Prevent font from getting too small
             font.setPointSize(new_size)
             self.editor.setFont(font)
+            self.ai_input_text.setFont(font)
+            self.ai_output_text.setFont(font)
 
     def get_api_key(self):
         if self.api_key_set and self.gemini_api_key:
@@ -339,23 +374,36 @@ class MarkdownViewer(QMainWindow):
                 genai.get_model('models/gemini-2.5-flash')
                 return True
             except Exception as e:
-                QMessageBox.warning(self, "API Key Error", f"The API key seems to be invalid.\nPlease check it and try again.\nError: {e}")
+                QMessageBox.warning(self, "API Key Error",
+                                    f"The API key seems to be invalid.\nPlease check it and try again.\nError: {e}")
                 self.api_key_set = False
                 self.gemini_api_key = None
                 return False
         return False
 
-    def ai_summarize(self):
+    def prepare_ai_tab(self):
         selected_text = self.editor.textCursor().selectedText()
         if not selected_text:
-            QMessageBox.information(self, "AI Tool", "Please select some text to summarize or explain.")
+            QMessageBox.information(self, "AI Tool", "Please select some text in the 'Editor' tab first.")
+            return
+
+        self.ai_input_text.setPlainText(selected_text)
+        self.ai_output_text.clear()
+        self.tabs.setCurrentIndex(2)  # Switch to the AI Assistant tab
+
+    def run_ai_generation(self):
+        content_to_analyze = self.ai_input_text.toPlainText()
+        if not content_to_analyze:
+            QMessageBox.information(self, "AI Tool",
+                                    "There is no content to analyze. Please send some text from the editor first.")
             return
 
         if not self.get_api_key():
             return
 
         self.statusBar().showMessage("Sending request to Gemini AI...")
-        QApplication.processEvents() # Update UI
+        self.ai_output_text.setPlaceholderText("Generating response...")
+        QApplication.processEvents()  # Update UI
 
         try:
             model = genai.GenerativeModel('gemini-2.5-flash')
@@ -365,20 +413,17 @@ class MarkdownViewer(QMainWindow):
 
             Content to analyze:
             ---
-            {selected_text}
+            {content_to_analyze}
             ---
             """
             response = model.generate_content(prompt)
 
             self.statusBar().clearMessage()
-
-            result_dialog = QMessageBox()
-            result_dialog.setWindowTitle("AI Assistant Result")
-            result_dialog.setText(response.text)
-            result_dialog.exec()
+            self.ai_output_text.setPlainText(response.text)
 
         except Exception as e:
             self.statusBar().clearMessage()
+            self.ai_output_text.setPlaceholderText("An error occurred.")
             QMessageBox.critical(self, "AI Error", f"An error occurred while contacting the AI service: {e}")
 
 
